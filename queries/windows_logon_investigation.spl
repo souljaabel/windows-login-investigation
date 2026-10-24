@@ -1,0 +1,44 @@
+
+# 1. Count successful and failed Windows logon events
+index=* sourcetype=windows_logon_json
+| stats count by EventID
+
+
+# 2. Investigate failed logons (Event ID 4625)
+index=* sourcetype=windows_logon_json EventID=4625
+| rex field=Message "Account Name:\s+(?<account>[^\r\n]+)"
+| rex field=Message "Logon Type:\s+(?<logon_type>\d+)"
+| rex field=Message "Process Name:\s+(?<process_name>[^\r\n]+)"
+| rex field=Message "Failure Reason:\s+(?<failure_reason>[^\r\n]+)"
+| rex field=Message "Status:\s+(?<status>0x[0-9A-Fa-f]+)"
+| rex field=Message "Sub Status:\s+(?<substatus>0x[0-9A-Fa-f]+)"
+| table TimeCreated EventID account logon_type failure_reason status substatus process_name
+
+
+# 3. Review successful logons (Event ID 4624)
+index=* sourcetype=windows_logon_json EventID=4624
+| rex field=Message "Account Name:\s+(?<account>[^\r\n]+)"
+| rex field=Message "Logon Type:\s+(?<logon_type>\d+)"
+| rex field=Message "Process Name:\s+(?<process_name>[^\r\n]+)"
+| rex field=Message "Elevated Token:\s+(?<elevated_token>\w+)"
+| table TimeCreated EventID account logon_type elevated_token process_name
+
+
+# 4. Reconstruct the timeline using the original event timestamp
+index=* sourcetype=windows_logon_json
+| eval event_time=strptime(TimeCreated,"%Y-%m-%dT%H:%M:%S.%N%z")
+| eval event_type=case(
+    EventID=4625,"Failed logon",
+    EventID=4624,"Successful logon",
+    true(),"Other"
+  )
+| sort 0 event_time
+| table TimeCreated event_type EventID Computer
+
+
+# 5. Examine linked logon IDs in successful logon events
+index=* sourcetype=windows_logon_json EventID=4624
+| rex field=Message "New Logon:[\s\S]*?Logon ID:\s+(?<new_logon_id>0x[0-9a-fA-F]+)"
+| rex field=Message "Linked Logon ID:\s+(?<linked_logon_id>0x[0-9a-fA-F]+)"
+| rex field=Message "Elevated Token:\s+(?<elevated_token>\w+)"
+| table TimeCreated new_logon_id linked_logon_id elevated_token
